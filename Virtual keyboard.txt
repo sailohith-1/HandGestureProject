@@ -1,0 +1,110 @@
+import cv2
+import mediapipe as mp
+import math
+
+# ---------------- Mediapipe Setup ----------------
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7)
+mp_draw = mp.solutions.drawing_utils
+
+# ---------------- Keyboard Layout ----------------
+keys = [["Q","W","E","R","T","Y","U","I","O","P"],
+        ["A","S","D","F","G","H","J","K","L"],
+        ["Z","X","C","V","B","N","M","<--","SPACE","ENTER"]]
+
+key_w, key_h = 80, 80
+gap = 15
+start_x, start_y = 50, 150
+
+typed_text = ""
+clicking = False
+
+# ---------------- Draw Keyboard ----------------
+def draw_keyboard(img, fingertip):
+    pressed_key = None
+    for i, row in enumerate(keys):
+        for j, key in enumerate(row):
+            x = start_x + j*(key_w + gap)
+            y = start_y + i*(key_h + gap)
+
+            # Highlight if fingertip inside
+            if fingertip and x < fingertip[0] < x+key_w and y < fingertip[1] < y+key_h:
+                cv2.rectangle(img, (x,y), (x+key_w, y+key_h), (0,255,0), -1)
+                cv2.putText(img, key, (x+15,y+50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+                pressed_key = key
+            else:
+                cv2.rectangle(img, (x,y), (x+key_w, y+key_h), (255,0,0), 2)
+                cv2.putText(img, key, (x+15,y+50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,0,0), 2)
+    return img, pressed_key
+
+# ---------------- Camera Setup ----------------
+cap = cv2.VideoCapture(0)
+cap.set(3, 1280)
+cap.set(4, 720)
+
+while True:
+    success, img = cap.read()
+    if not success:
+        break
+
+    img = cv2.flip(img,1)
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    results = hands.process(img_rgb)
+
+    fingertip, middle_tip = None, None
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            h, w, _ = img.shape
+            # Index finger tip
+            x1 = int(hand_landmarks.landmark[8].x * w)
+            y1 = int(hand_landmarks.landmark[8].y * h)
+            fingertip = (x1,y1)
+
+            # Middle finger tip
+            x2 = int(hand_landmarks.landmark[12].x * w)
+            y2 = int(hand_landmarks.landmark[12].y * h)
+            middle_tip = (x2,y2)
+
+            # Draw skeleton 
+            mp_draw.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+            # Draw solid green circle on index finger
+            cv2.circle(img, fingertip, 15, (0,255,0), -1)   # Solid green
+
+            # Draw solid blue circle on middle finger
+            cv2.circle(img, middle_tip, 15, (255,0,0), -1)  # Solid blue
+
+    # Draw keyboard
+    img, pressed_key = draw_keyboard(img, fingertip)
+
+    # Detect key press (pinch = click)
+    if fingertip and middle_tip and pressed_key:
+        dist = math.hypot(fingertip[0]-middle_tip[0], fingertip[1]-middle_tip[1])
+
+        if dist < 35 and not clicking:
+            if pressed_key == "<--":
+                typed_text = typed_text[:-1]
+            elif pressed_key == "SPACE":
+                typed_text += " "
+            elif pressed_key == "ENTER":
+                typed_text += "\n"
+            else:
+                typed_text += pressed_key
+            clicking = True
+
+        elif dist > 50:
+            clicking = False
+
+    # Display typed text area
+    cv2.rectangle(img, (50,50), (900,120), (255,255,255), -1)
+    y_offset = 100
+    for line in typed_text.split("\n"):
+        cv2.putText(img, line, (60,y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0,0,0), 3)
+        y_offset += 50
+
+    cv2.imshow("Virtual Keyboard", img)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
